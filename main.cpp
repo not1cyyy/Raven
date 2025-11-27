@@ -42,92 +42,59 @@ std::ptrdiff_t findSequence(const std::vector<unsigned char>& buffer) {
         return -1;
     }
 }
-int main() {
-    fs::path saveFile = getStellarBladeSave();
-    if (!fs::exists(saveFile)) {
-        std::cout << "Save file not found at: " << saveFile << std::endl;
-        return 1;
-    }
 
-    std::ifstream file(saveFile, std::ios::binary);
-    if (!file.is_open()) {
-        std::cout << "Failed to open save file." << std::endl;
-        return 1;
-    }
+std::vector<unsigned char> readFile(const fs::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) throw std::runtime_error("Failed to open " + path.string());
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
 
-    // Read the entire file into a buffer
-    std::vector<unsigned char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    file.close();
-
-    // Call findSequence
-    std::ptrdiff_t offset = findSequence(buffer);
-    if (offset == -1 || offset >= buffer.size()) {
-    std::cout << "Invalid offset in original save file." << std::endl;
-    return 1;
-    }
-
-    // Read from offset till the end of file 
-    std::vector<unsigned char> importantBytes(buffer.begin() + offset, buffer.end());
-
+void writeFile(const fs::path& path, const std::vector<unsigned char>& data){
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open()) throw std::runtime_error("Failed to write " + path.string());
+    out.write(reinterpret_cast<const char*>(data.data()), data.size());
+}
+fs::path findFirstSavInCurrentDir(){
     fs::path currentDir = fs::current_path();
-    fs::path savFile;
-
-    // Find the first .sav file in the current directory
-    for (auto& entry : fs::directory_iterator(currentDir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".sav") {
-            savFile = entry.path();
-            break;
+    for (auto& entry : fs::directory_iterator(currentDir)){
+        if (entry.is_regular_file() && entry.path().extension() == ".sav"){
+            return entry.path();
         }
     }
+    return {}; // empty path if none found 
+}
 
-    if (savFile.empty()) {
-        std::cout << "No .sav file found in the current directory." << std::endl;
+void patchBuffer(std::vector<unsigned char>& targetBuffer, const std::vector<unsigned char>& sourceBuffer, std::ptrdiff_t offsetTarget, std::ptrdiff_t offsetSource){
+    if (offsetTarget + sourceBuffer.size() > targetBuffer.size()){
+        targetBuffer.resize(offsetTarget + sourceBuffer.size());
+    }
+    std::copy(sourceBuffer.begin() + offsetSource, sourceBuffer.end(), targetBuffer.begin() + offsetTarget);
+}
+int main() {
+    try{
+
+        auto saveFile = getStellarBladeSave();
+        auto buffer = readFile(saveFile);
+        auto offset = findSequence(buffer);
+
+        std::vector<unsigned char> importantBytes(buffer.begin() + offset, buffer.end());
+
+        auto targetSav = findFirstSavInCurrentDir();
+        if (targetSav.empty()) throw std::runtime_error("No .sav file found in current directory");
+
+        auto savBuffer = readFile(targetSav);
+        auto savOffset = findSequence(savBuffer);
+
+        patchBuffer(savBuffer, importantBytes, savOffset, 0);
+        writeFile(targetSav, savBuffer);
+
+        fs::rename(targetSav, targetSav.parent_path() / "StellarBladeSave00.sav");
+
+        std::cout << "Successfully patched .sav file. \n" << std::endl;
+
+
+    } catch(const std::exception& e){
+        std::cerr << "Error: " << e.what() << std::endl;
         return 1;
-    }
-
-    std::cout << "Found .sav file: " << savFile << std::endl;
-
-    // Read the entire .sav file into a buffer
-    std::ifstream fffile(savFile, std::ios::binary);
-    if (!fffile) {
-        std::cout << "Failed to open .sav file." << std::endl;
-        return 1;
-    }
-
-    std::vector<unsigned char> savBuffer((std::istreambuf_iterator<char>(fffile)), std::istreambuf_iterator<char>());
-    fffile.close();
-
-    // Call findSequence on savBuffer
-    std::ptrdiff_t savOffset = findSequence(savBuffer);
-    if (savOffset == -1) {
-        std::cout << "Target byte sequence not found in the .sav file." << std::endl;
-        return 1;
-    }
-
-    // Ensure savBuffer can fit importantBytes starting from savOffset
-    if (savBuffer.size() - savOffset < importantBytes.size()) {
-        savBuffer.resize(savOffset + importantBytes.size()); // resize if necessary
-    }
-
-    // Overwrite savBuffer from savOffset with importantBytes
-    std::copy(importantBytes.begin(), importantBytes.end(), savBuffer.begin() + savOffset);
-
-    // Write modified savBuffer back to the .sav file
-    std::ofstream outFile(savFile, std::ios::binary);
-    if (!outFile.is_open()) {
-        std::cout << "Failed to open .sav file for writing." << std::endl;
-        return 1;
-    }
-    outFile.write(reinterpret_cast<const char*>(savBuffer.data()), savBuffer.size());
-    outFile.close();
-
-    // Rename the .sav file to StellarBladeSave00.sav
-    fs::path newSavFile = savFile.parent_path() / "StellarBladeSave00.sav";
-    if (saveFile != newSavFile){
-        fs::rename(savFile, newSavFile); 
-    }
-
-    std::cout << "Successfully patched the .sav file." << std::endl;
-    std::cout << "Overwrote " << importantBytes.size() << " bytes at offset 0x" << std::hex << savOffset << std::dec << std::endl;
-
-}   
+    } 
+}  
