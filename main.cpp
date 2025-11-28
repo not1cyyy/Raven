@@ -5,6 +5,7 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
+#include <optional>
 
 namespace fs = std::filesystem;
 
@@ -21,7 +22,7 @@ fs::path getStellarBladeSave() {
     return {};
 }
 
-std::ptrdiff_t findSequence(const std::vector<unsigned char>& buffer) {
+std::optional<std::ptrdiff_t> findSequence(const std::vector<unsigned char>& buffer) {
     const std::vector<unsigned char> targetBytes = {
         0x53, 0x42, 0x53, 0x61, 0x76, 0x65, 0x47, 0x61,
         0x6D, 0x65, 0x44, 0x61, 0x74, 0x61, 0x5F, 0x4F,
@@ -32,14 +33,15 @@ std::ptrdiff_t findSequence(const std::vector<unsigned char>& buffer) {
     auto it = std::search(buffer.begin(), buffer.end(),
                           targetBytes.begin(), targetBytes.end());
 
+    std::cout << "[INFO] Reading save file..." << std::endl;
     if (it != buffer.end()) {
         std::ptrdiff_t index = std::distance(buffer.begin(), it);
-        std::cout << "Found target byte sequence at offset: 0x"
+        std::cout << "[INFO] Found target byte sequence at offset: 0x"
                   << std::hex << index << std::dec << std::endl;
         return index;
     } else {
-        std::cout << "Target byte sequence not found in the save file." << std::endl;
-        return -1;
+        std::cout << "[ERROR] Target byte sequence not found in the save file." << std::endl;
+        return std::nullopt;
     }
 }
 
@@ -53,6 +55,8 @@ void writeFile(const fs::path& path, const std::vector<unsigned char>& data){
     std::ofstream out(path, std::ios::binary);
     if (!out.is_open()) throw std::runtime_error("Failed to write " + path.string());
     out.write(reinterpret_cast<const char*>(data.data()), data.size());
+    std::cout << "[INFO] Overwriting bytes..." << std::endl;
+    std::cout << "[INFO] Wrote necessary bytes to " << path.string() << std::endl;
 }
 fs::path findFirstSavInCurrentDir(){
     fs::path currentDir = fs::current_path();
@@ -70,31 +74,36 @@ void patchBuffer(std::vector<unsigned char>& targetBuffer, const std::vector<uns
     }
     std::copy(sourceBuffer.begin() + offsetSource, sourceBuffer.end(), targetBuffer.begin() + offsetTarget);
 }
+
+void patchStellarBladeSave(){
+    auto saveFile = getStellarBladeSave();
+    auto buffer = readFile(saveFile);
+    auto offsetOpt = findSequence(buffer);
+    if (!offsetOpt) throw std::runtime_error("[ERROR] Target byte sequence not found in source save file.");
+    auto offset = *offsetOpt;
+
+    std::vector<unsigned char> importantBytes(buffer.begin() + offset, buffer.end());
+
+    auto targetSav = findFirstSavInCurrentDir();
+    if (targetSav.empty()) throw std::runtime_error("[ERROR] No .sav file found in current directory");
+
+    auto savBuffer = readFile(targetSav);
+    auto savOffsetOpt = findSequence(savBuffer);
+    if (!savOffsetOpt) throw std::runtime_error("[ERROR] Target byte sequence not found in target save file.");
+    auto savOffset = *savOffsetOpt;
+
+    patchBuffer(savBuffer, importantBytes, savOffset, 0);
+    writeFile(targetSav, savBuffer);
+
+    fs::rename(targetSav, targetSav.parent_path() / "StellarBladeSave00.sav");
+}
 int main() {
     try{
-
-        auto saveFile = getStellarBladeSave();
-        auto buffer = readFile(saveFile);
-        auto offset = findSequence(buffer);
-
-        std::vector<unsigned char> importantBytes(buffer.begin() + offset, buffer.end());
-
-        auto targetSav = findFirstSavInCurrentDir();
-        if (targetSav.empty()) throw std::runtime_error("No .sav file found in current directory");
-
-        auto savBuffer = readFile(targetSav);
-        auto savOffset = findSequence(savBuffer);
-
-        patchBuffer(savBuffer, importantBytes, savOffset, 0);
-        writeFile(targetSav, savBuffer);
-
-        fs::rename(targetSav, targetSav.parent_path() / "StellarBladeSave00.sav");
-
-        std::cout << "Successfully patched .sav file. \n" << std::endl;
-
+        patchStellarBladeSave();
+        std::cout << "[SUCCESS] Patched .sav file. \n" << std::endl;
 
     } catch(const std::exception& e){
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "[ERROR] " << e.what() << std::endl;
         return 1;
     } 
 }  
