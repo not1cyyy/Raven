@@ -4,12 +4,10 @@ Script to modify Stellar Blade save files without manual hex editing
 Using g++: 
 ```
 g++ src/*.cpp -I include -std=c++17 -o SavePatcher
-
 ```
 Using MinGW on Windows: 
 ```
 g++ src/*.cpp -I include -std=gnu++17 -o SavePatcher.exe
-
 ```
 # 🚀 Usage 
 Place the save file you want to modify in the same folder as the executable.
